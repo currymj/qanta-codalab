@@ -97,11 +97,14 @@ class DanGuesser:
         self.word_to_i = None
 
     def train(self, training_data) -> None:
-        self.dan_model = DanModel(100,256, 256, 1000, 0, 0.1)
         questions = training_data[0]
         answers = training_data[1]
         self.i_to_ans = {i: ans for i, ans in enumerate(answers)}
         self.ans_to_i = dict((v,k) for k,v in self.i_to_ans.items())
+        self.dan_model = DanModel(100,256, 256, len(self.ans_to_i), 0, 0.1)
+
+    def questions_to_batch(self, question_strings):
+        raise NotImplementedError
 
     def save(self):
         with open(MODEL_PATH, 'wb') as f:
@@ -110,9 +113,14 @@ class DanGuesser:
         torch.save(self.dan_model.state_dict(), TORCH_MODEL_PATH)
 
     def guess(self, questions: List[str], max_n_guesses: Optional[int]) -> List[List[Tuple[str, float]]]:
+        #idx_qs = self.questions_to_batch(questions)
+        #prediction_scores = self.dan_model(idx_qs)
 
-
+        guesses = []
+        for i in range(len(questions)):
+            guesses.append([('beer', 1.0), ('coffee', 0.5)])
         return guesses
+
     @classmethod
     def load(cls):
         with open(MODEL_PATH, 'rb') as f:
@@ -120,7 +128,7 @@ class DanGuesser:
             guesser = DanGuesser()
             guesser.i_to_ans = params['i_to_ans']
             guesser.ans_to_i = params['ans_to_i']
-            guesser.dan_model = DanModel(100,256, 256, 1000, 0, 0.1)
+            guesser.dan_model = DanModel(100,256, 256, len(guesser.ans_to_i), 0, 0.1)
             guesser.dan_model.load_state_dict(torch.load(
                 TORCH_MODEL_PATH))
             guesser.dan_model.eval()
