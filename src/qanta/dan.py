@@ -3,7 +3,6 @@ from collections import defaultdict
 import pickle
 import json
 from os import path
-
 import click
 from tqdm import tqdm
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -11,10 +10,12 @@ from flask import Flask, jsonify, request
 
 from qanta import util
 from qanta.dataset import QuizBowlDataset
+from qanta import preprocess
 import torch
 from torch import nn
+import nltk
 
-MODEL_PATH = 'tfidf.pickle'
+MODEL_PATH = 'danmodel.pickle'
 TORCH_MODEL_PATH = 'danmodel.pyt'
 BUZZ_NUM_GUESSES = 10
 BUZZ_THRESHOLD = 0.3
@@ -71,14 +72,16 @@ class DanModel(nn.Module):
                 nn.BatchNorm1d(self.n_classes),
                 nn.Dropout(self.nn_dropout)
         )
+        self.dropout = nn.Dropout(self.nn_dropout)
         self.vocab_size = vocab_size
         self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=pad_idx)
         #self.unigram_embeddings.weight.data = 
     def _pool(self, embed):
         emb_max, _ = torch.max(embed, 1)
+        return emb_max
 
     def forward(self, input_words):
-        embed = self.embeddings(input_words)
+        embed = self.embedding(input_words)
         embed = self._pool(embed)
         embed = self.dropout(embed)
         encoded = self.encoder(embed)
@@ -97,14 +100,34 @@ class DanGuesser:
         self.word_to_i = None
 
     def train(self, training_data) -> None:
+        hidden_layer_size = 256
         questions = training_data[0]
         answers = training_data[1]
+        words, self.word_to_i, self.i_to_word = preprocess.load_words(questions)
         self.i_to_ans = {i: ans for i, ans in enumerate(answers)}
         self.ans_to_i = dict((v,k) for k,v in self.i_to_ans.items())
-        self.dan_model = DanModel(100,256, 256, len(self.ans_to_i), 0, 0.1)
+        self.dan_model = DanModel(len(self.ans_to_i),hidden_layer_size, hidden_layer_size, len(words), 0, 0.1)
+
+        print('Questions loaded, now iterating...')
+        for q in questions:
+            batched = self.questions_to_batch([q])
+            print(batched)
+            torch_tensor = self.make_padded_tensor(batched)
+            self.dan_model(torch_tensor)
+
+    def make_padded_tensor(self, batch_inds):
+        lengths = [len(q) for q in batch_inds]
+        pad_len = max(lengths)
+        torch_tensor = torch.zeros(len(batch_inds), pad_len, dtype=torch.int64)
+        for i in range(len(batch_inds)):
+            for j in range(len(batch_inds[i])):
+                torch_tensor[i, j] = batch_inds[i][j]
+        return torch_tensor
 
     def questions_to_batch(self, question_strings):
-        raise NotImplementedError
+        tokenized = [preprocess.word_to_tokens(q, self.word_to_i) for q in question_strings]
+        return tokenized
+
 
     def save(self):
         with open(MODEL_PATH, 'wb') as f:
@@ -246,6 +269,8 @@ def train():
     Train the DAN model, requires downloaded data and saves to models/
     """
     dataset = QuizBowlDataset(guesser_train=True)
+    print('Downloading punkt...')
+    nltk.download('punkt')
     print('training DAN...')
     dan_guesser = DanGuesser()
     dan_guesser.train(dataset.training_data())

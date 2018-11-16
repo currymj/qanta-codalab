@@ -21,7 +21,8 @@ def read_csv(filename):
 def word_to_tokens(q, word2ind):
     q = ' '.join(q)
     q = cleaning(q)
-    tokenized = [word2ind.get(w, UNK) for w in q]
+    unk_token = word2ind[UNK]
+    tokenized = [word2ind.get(w, unk_token) for w in q]
     return tokenized
 
 
