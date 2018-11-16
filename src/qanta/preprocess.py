@@ -4,6 +4,8 @@ import string
 from typing import List
 from nltk import word_tokenize
 
+UNK = '<unk>'
+PAD = '<pad>'
 
 def read_csv(filename):
     ## Reading data
@@ -15,6 +17,12 @@ def read_csv(filename):
     questions = cleaning(questions)
     data = list(zip(questions, answers))
     return data
+
+def word_to_tokens(q, word2ind):
+    q = ' '.join(q)
+    q = cleaning(q)
+    tokenized = [word2ind.get(w, UNK) for w in q]
+    return tokenized
 
 
 def cleaning(q):
@@ -50,12 +58,10 @@ def load_words(exs):
     exs: list of input questions-type pairs
     """
     words = set()
-    UNK = '<unk>'
-    PAD = '<pad>'
     word2ind = {PAD: 0, UNK: 1}
     ind2word = {0: PAD, 1: UNK}
-    for q_text, _ in exs:
-        q_text = word_tokenize(q_text)
+    for q_text in exs:
+        q_text = word_tokenize(' '.join(q_text))
         for w in q_text:
             words.add(w)
     words = sorted(words)
