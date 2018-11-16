@@ -3,6 +3,7 @@ src/scores.json
 data/*
 models/*
 *.pickle
+*.pyt
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
