@@ -7,13 +7,15 @@ import click
 from tqdm import tqdm
 from sklearn.feature_extraction.text import TfidfVectorizer
 from flask import Flask, jsonify, request
-
+import time
+from torch.utils.data import Dataset, DataLoader
 from qanta import util
 from qanta.dataset import QuizBowlDataset
 from qanta import preprocess
 import torch
 from torch import nn
 import nltk
+from tqdm import tqdm
 
 MODEL_PATH = 'danmodel.pickle'
 TORCH_MODEL_PATH = 'danmodel.pyt'
@@ -59,6 +61,26 @@ class DanEncoder(nn.Module):
     def forward(self, x_array):
         return self.encoder(x_array)
 
+class QuestionsDataset(Dataset):
+    def __init__(self, questions_arr, answers_arr, word_to_i, ans_to_i):
+        self.questions = questions_arr
+        self.answers = answers_arr
+        self.word_to_i = word_to_i
+        self.ans_to_i = ans_to_i
+
+    def __len__(self):
+        return len(self.questions)
+
+    def __getitem__(self, i):
+        question_text = self.questions[i]
+        answer_text = self.answers[i]
+
+        return (self._question_to_batch(question_text), self.ans_to_i[answer_text])
+
+    def _question_to_batch(self, q):
+        return preprocess.word_to_tokens(q, self.word_to_i)
+
+
 class DanModel(nn.Module):
     def __init__(self, n_classes, n_hidden_units, embedding_dim, vocab_size, pad_idx, nn_dropout):
         super(DanModel, self).__init__()
@@ -90,13 +112,14 @@ class DanModel(nn.Module):
 
 
 class DanGuesser:
-    def __init__(self):
+    def __init__(self, on_cuda=False):
         self.dan_model = None
         self.i_to_ans = None
         self.ans_to_i = None
         self.vocab_list = None
         self.i_to_word = None
         self.word_to_i = None
+        self.on_cuda = on_cuda
 
     def train(self, training_data) -> None:
         hidden_layer_size = 256
@@ -106,14 +129,23 @@ class DanGuesser:
         self.i_to_ans = {i: ans for i, ans in enumerate(answers)}
         self.ans_to_i = dict((v,k) for k,v in self.i_to_ans.items())
         self.dan_model = DanModel(len(self.ans_to_i),hidden_layer_size, hidden_layer_size, len(words), 0, 0.1)
+        if self.on_cuda:
+            self.dan_model.cuda()
+        dataset = QuestionsDataset(questions, answers, self.word_to_i, self.ans_to_i)
+        dataloader = DataLoader(dataset, batch_size=16)
 
         print('Questions loaded, now iterating...')
-        for q in questions:
-            batched = self.questions_to_batch([q, q, q, q])
-            torch_tensor = self.make_padded_tensor(batched)
+        print('on cuda? {}'.format(self.on_cuda))
+        for batch_idx, batch in enumerate(tqdm(dataloader)):
+            question, answer = batch
+            torch_tensor = self.make_padded_tensor(question)
+            if self.on_cuda:
+                torch_tensor = torch_tensor.cuda()
             self.dan_model(torch_tensor)
 
     def make_padded_tensor(self, batch_inds):
+        # note: maybe this could be made more efficient,
+        # if it turns out to be a bottleneck
         lengths = [len(q) for q in batch_inds]
         pad_len = max(lengths)
         torch_tensor = torch.zeros(len(batch_inds), pad_len, dtype=torch.int64)
@@ -122,9 +154,6 @@ class DanGuesser:
                 torch_tensor[i, j] = batch_inds[i][j]
         return torch_tensor
 
-    def questions_to_batch(self, question_strings):
-        tokenized = [preprocess.word_to_tokens(q, self.word_to_i) for q in question_strings]
-        return tokenized
 
 
     def save(self):
@@ -134,8 +163,8 @@ class DanGuesser:
         torch.save(self.dan_model.state_dict(), TORCH_MODEL_PATH)
 
     def guess(self, questions: List[str], max_n_guesses: Optional[int]) -> List[List[Tuple[str, float]]]:
-        #idx_qs = self.questions_to_batch(questions)
-        #prediction_scores = self.dan_model(idx_qs)
+        idx_qs = self.questions_to_batch(questions)
+        prediction_scores = self.dan_model(idx_qs)
 
         guesses = []
         for i in range(len(questions)):
@@ -270,7 +299,7 @@ def train():
     print('Downloading punkt...')
     nltk.download('punkt')
     print('training DAN...')
-    dan_guesser = DanGuesser()
+    dan_guesser = DanGuesser(on_cuda=torch.cuda.is_available())
     dan_guesser.train(dataset.training_data())
     dan_guesser.save()
 
