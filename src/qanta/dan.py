@@ -89,7 +89,6 @@ class DanModel(nn.Module):
 
 
 
-
 class DanGuesser:
     def __init__(self):
         self.dan_model = None
@@ -110,8 +109,7 @@ class DanGuesser:
 
         print('Questions loaded, now iterating...')
         for q in questions:
-            batched = self.questions_to_batch([q])
-            print(batched)
+            batched = self.questions_to_batch([q, q, q, q])
             torch_tensor = self.make_padded_tensor(batched)
             self.dan_model(torch_tensor)
 
