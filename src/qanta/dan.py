@@ -121,8 +121,105 @@ class DanGuesser:
     def save(self):
         raise NotImplementedError
 
+    def question_preprocessing(self, questions: List[str]) -> List[List[str]]:
+        questions = preprocess.cleaning(questions, False)
+        questions = [q.split() for q in questions]
+        return questions
+
+    def postprocess_answer(self, ans):
+        "Replaces spaces with _ in the answers. Ideally, shouldn't be necessary."
+        return '_'.join(ans.split())
+
     def guess(self, questions: List[str], max_n_guesses: Optional[int]) -> List[List[Tuple[str, float]]]:
-        raise NotImplementedError
+        self.dan_model.eval()
+        questions_split = self.question_preprocessing(questions)
+        input_questions = []
+        for q in questions_split:
+            input_questions.append(self.vectorize_without_labels(q))
+
+        input_batch = self.batchify_without_labels(input_questions)
+        question_text = input_batch['text']
+        question_len = input_batch['len']
+        logits = self.dan_model.forward(question_text, question_len).detach()
+        top_n, top_i = logits.topk(max_n_guesses)
+        answer_indices = top_i.numpy()
+        answer_scores = top_n.numpy()
+        answer_score_pair_lists = []
+        for i in range(len(answer_indices)):
+            q_top_answers = [self.postprocess_answer(self.i_to_class[ans_ind]) for ans_ind in answer_indices[i]]
+            q_top_scores = [score for score in answer_scores[i]]
+            answer_score_pair_lists.append( list(zip(q_top_answers, q_top_scores)) )
+
+        return answer_score_pair_lists
+
+
+    def batchify_without_labels(self, batch):
+        """
+        Gather a batch of individual examples into one batch, 
+        which includes the question text, question length and labels 
+
+        Keyword arguments:
+        batch: list of outputs from vectorize function
+        """
+
+        question_len = list()
+        for ex in batch:
+            question_len.append(len(ex))
+        x1 = torch.LongTensor(len(question_len), max(question_len)).zero_()
+        for i in range(len(question_len)):
+            question_text = batch[i]
+            vec = torch.LongTensor(question_text)
+            x1[i, :len(question_text)].copy_(vec)
+        q_batch = {'text': x1, 'len': torch.FloatTensor(question_len)}
+        return q_batch
+
+    def vectorize_with_labels(self, ex):
+        """
+        vectorize a single example based on the word2ind dict. 
+
+        Keyword arguments:
+        exs: list of input questions-type pairs
+        ex: tokenized question sentence (list)
+        label: type of question sentence
+
+        Output:  vectorized sentence(python list) and label(int)
+        e.g. ['text', 'test', 'is', 'fun'] -> [0, 2, 3, 4]
+        """
+
+        question_text, question_label = ex
+        vec_text = [0] * len(question_text)
+
+        for i in range(len(question_text)):
+            try:
+                vec_text[i] = self.word2ind[question_text[i]]
+            except:
+                vec_text[i] = self.word2ind['<unk>']
+
+        return vec_text, question_label
+
+    def vectorize_without_labels(self, ex):
+        """
+        vectorize a single example based on the word2ind dict. 
+
+        Keyword arguments:
+        exs: list of input questions-type pairs
+        ex: tokenized question sentence (list)
+        label: type of question sentence
+
+        Output:  vectorized sentence(python list) and label(int)
+        e.g. ['text', 'test', 'is', 'fun'] -> [0, 2, 3, 4]
+        """
+
+        question_text = ex
+        vec_text = [0] * len(question_text)
+
+        for i in range(len(question_text)):
+            try:
+                vec_text[i] = self.word2ind[question_text[i]]
+            except:
+                vec_text[i] = self.word2ind['<unk>']
+
+        return vec_text
 
     @classmethod
     def load(cls):
@@ -262,6 +359,13 @@ def train():
     dan_guesser.train(dataset.training_data())
     dan_guesser.save()
 
+
+@cli.command()
+def test_guess():
+    dan_guesser = DanGuesser.load()
+    dan_guesser.guess(['This is a test question for ten points.'], 1)
+    dan_guesser.guess(['Here we have a first question for ten points.', 'And another question for ten points.'], 1)
+    dan_guesser.guess(['Here we have a first question for ten points.', 'And another question for ten points.'], 2)
 
 @cli.command()
 @click.option('--local-qanta-prefix', default='data/')

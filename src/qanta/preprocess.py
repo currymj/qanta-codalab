@@ -3,30 +3,23 @@ import re
 import string
 from typing import List
 from nltk import word_tokenize
+from nltk.corpus import stopwords
 
-UNK = '<unk>'
-PAD = '<pad>'
 
-def read_csv(filename):
+def read_csv(filename, remove_stopwords=False):
     ## Reading data
     df = pd.read_csv(filename)
     questions = df['Text'].values.tolist()
     answers = df['Answer'].values.tolist()
 
     ## cleaning data (trivial preprocessing and removing ftp)
-    questions = cleaning(questions)
+    questions = cleaning(questions, remove_stopwords)
+    questions = [q.split() for q in questions]
     data = list(zip(questions, answers))
     return data
 
-def word_to_tokens(q, word2ind):
-    q = ' '.join(q)
-    q = cleaning(q)
-    unk_token = word2ind[UNK]
-    tokenized = [word2ind.get(w, unk_token) for w in q]
-    return tokenized
 
-
-def cleaning(q):
+def cleaning(q, remove_stopwords):
     ftp_patterns = {
         '\n',
         ', for 10 points,',
@@ -50,19 +43,27 @@ def cleaning(q):
     q = [re.sub(regex_pattern,' ', element.strip().lower()) for element in q]
     q = [re.sub(r'[^\x00-\x7F]+',' ', element) for element in q]
     q = [' '.join(element.split()) for element in q]
+    if remove_stopwords:
+        stop_words = stopwords.words('english')
+        for i in range(len(q)):
+            words = q[i].split()
+            q[i] = ' '.join([w for w in words if not w in stop_words])
+    
     return q
 def load_words(exs):
     """
     vocabuary building
-
     Keyword arguments:
     exs: list of input questions-type pairs
     """
     words = set()
+    UNK = '<unk>'
+    PAD = '<pad>'
     word2ind = {PAD: 0, UNK: 1}
     ind2word = {0: PAD, 1: UNK}
-    for q_text in exs:
-        q_text = word_tokenize(' '.join(q_text))
+    for q_text, _ in exs:
+        #q_text = word_tokenize(q_text)
+        #q_text = q_text.split()
         for w in q_text:
             words.add(w)
     words = sorted(words)
@@ -78,9 +79,10 @@ def class_labels(data):
     i_to_class = {}
     i = 0
     for _, ans in data:
-        class_to_i[ans] = i
-        i_to_class[i] = ans
-        i+=1
+        if ans not in class_to_i.keys():
+            class_to_i[ans] = i
+            i_to_class[i] = ans
+            i+=1
     return class_to_i, i_to_class
 
 if __name__ == "__main__":
@@ -91,7 +93,7 @@ if __name__ == "__main__":
 
     ## File processing and cleaning
     train_data = read_csv(train_file)
-    # print(train_data[1:5])
+    #print(train_data[1:5])
 
     #words, word2ind, ind2word = load_words(train_data)
 
