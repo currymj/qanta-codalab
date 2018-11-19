@@ -18,8 +18,8 @@ import nltk
 from tqdm import tqdm
 import numpy as np
 
-MODEL_PATH = 'data/danmodel.pickle'
-TORCH_MODEL_PATH = 'data/danmodel.pyt'
+MODEL_PATH = 'danmodel.pickle'
+TORCH_MODEL_PATH = 'danmodel.pyt'
 BUZZ_NUM_GUESSES = 10
 BUZZ_THRESHOLD = 0.3
 
@@ -298,9 +298,9 @@ def train():
 @cli.command()
 def test_guess():
     dan_guesser = DanGuesser.load()
-    dan_guesser.guess(['This is a test question for ten points.'], 1)
-    dan_guesser.guess(['Here we have a first question for ten points.', 'And another question for ten points.'], 1)
-    dan_guesser.guess(['Here we have a first question for ten points.', 'And another question for ten points.'], 2)
+    print(dan_guesser.guess(['This is a test question for ten points.'], 1))
+    print(dan_guesser.guess(['Here we have a first question for ten points.', 'And another question for ten points.'], 1))
+    print(dan_guesser.guess(['Here we have a first question for ten points.', 'And another question for ten points.'], 2))
 
 @cli.command()
 @click.option('--local-qanta-prefix', default='data/')
