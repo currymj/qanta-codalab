@@ -240,64 +240,6 @@ class DanGuesser:
         return guesser
 
 
-
- 
-class TfidfGuesser:
-    def __init__(self):
-        self.tfidf_vectorizer = None
-        self.tfidf_matrix = None
-        self.i_to_ans = None
-
-    def train(self, training_data) -> None:
-        questions = training_data[0]
-        answers = training_data[1]
-        answer_docs = defaultdict(str)
-        for q, ans in zip(questions, answers):
-            text = ' '.join(q)
-            answer_docs[ans] += ' ' + text
-
-        x_array = []
-        y_array = []
-        for ans, doc in answer_docs.items():
-            x_array.append(doc)
-            y_array.append(ans)
-
-        self.i_to_ans = {i: ans for i, ans in enumerate(y_array)}
-        self.tfidf_vectorizer = TfidfVectorizer(
-            ngram_range=(1, 3), min_df=2, max_df=.9
-        ).fit(x_array)
-        self.tfidf_matrix = self.tfidf_vectorizer.transform(x_array)
-
-    def guess(self, questions: List[str], max_n_guesses: Optional[int]) -> List[List[Tuple[str, float]]]:
-        representations = self.tfidf_vectorizer.transform(questions)
-        guess_matrix = self.tfidf_matrix.dot(representations.T).T
-        guess_indices = (-guess_matrix).toarray().argsort(axis=1)[:, 0:max_n_guesses]
-        guesses = []
-        for i in range(len(questions)):
-            idxs = guess_indices[i]
-            guesses.append([(self.i_to_ans[j], guess_matrix[i, j]) for j in idxs])
-
-        return guesses
-
-    def save(self):
-        with open(MODEL_PATH, 'wb') as f:
-            pickle.dump({
-                'i_to_ans': self.i_to_ans,
-                'tfidf_vectorizer': self.tfidf_vectorizer,
-                'tfidf_matrix': self.tfidf_matrix
-            }, f)
-
-    @classmethod
-    def load(cls):
-        with open(MODEL_PATH, 'rb') as f:
-            params = pickle.load(f)
-            guesser = TfidfGuesser()
-            guesser.tfidf_vectorizer = params['tfidf_vectorizer']
-            guesser.tfidf_matrix = params['tfidf_matrix']
-            guesser.i_to_ans = params['i_to_ans']
-            return guesser
-
-
 def create_app(enable_batch=True):
     dan_guesser = DanGuesser.load()
     app = Flask(__name__)
@@ -350,14 +292,7 @@ def train():
     """
     Train the DAN model, requires downloaded data and saves to models/
     """
-    dataset = QuizBowlDataset(guesser_train=True)
-    print('cuda status: {}'.format(torch.cuda.is_available()))
-    print('Downloading punkt...')
-    nltk.download('punkt')
-    print('training DAN...')
-    dan_guesser = DanGuesser(on_cuda=torch.cuda.is_available())
-    dan_guesser.train(dataset.training_data())
-    dan_guesser.save()
+    print("No training from within docker model. Train elsewhere and copy to the data directory.")
 
 
 @cli.command()
