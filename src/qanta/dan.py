@@ -16,9 +16,10 @@ import torch
 from torch import nn
 import nltk
 from tqdm import tqdm
+import numpy as np
 
-MODEL_PATH = 'danmodel.pickle'
-TORCH_MODEL_PATH = 'danmodel.pyt'
+MODEL_PATH = 'data/danmodel.pickle'
+TORCH_MODEL_PATH = 'data/danmodel.pyt'
 BUZZ_NUM_GUESSES = 10
 BUZZ_THRESHOLD = 0.3
 
@@ -39,146 +40,103 @@ def batch_guess_and_buzz(model, questions) -> List[Tuple[str, bool]]:
         outputs.append((guesses[0][0], buzz))
     return outputs
 
-class DanEncoder(nn.Module):
-    # from QANTA laboratory
-    def __init__(self, embedding_dim, n_hidden_layers, n_hidden_units, dropout_prob):
-        super(DanEncoder, self).__init__()
-        encoder_layers = []
-        for i in range(n_hidden_layers):
-            if i == 0:
-                input_dim = embedding_dim
-            else:
-                input_dim = n_hidden_units
-
-            encoder_layers.extend([
-                nn.Linear(input_dim, n_hidden_units),
-                nn.BatchNorm1d(n_hidden_units),
-                nn.ELU(),
-                nn.Dropout(dropout_prob),
-            ])
-        self.encoder = nn.Sequential(*encoder_layers)
-
-    def forward(self, x_array):
-        return self.encoder(x_array)
-
-class QuestionsDataset(Dataset):
-    def __init__(self, questions_arr, answers_arr, word_to_i, ans_to_i):
-        self.questions = questions_arr
-        self.answers = answers_arr
-        self.word_to_i = word_to_i
-        self.ans_to_i = ans_to_i
-
-    def __len__(self):
-        return len(self.questions)
-
-    def __getitem__(self, i):
-        question_text = self.questions[i]
-        answer_text = self.answers[i]
-
-        return (self._question_to_batch(question_text), self.ans_to_i[answer_text])
-
-    def _question_to_batch(self, q):
-        return preprocess.word_to_tokens(q, self.word_to_i)
-
-
 class DanModel(nn.Module):
-    def __init__(self, n_classes, n_hidden_units, embedding_dim, vocab_size, pad_idx, nn_dropout):
+    """High level model that handles intializing the underlying network
+    architecture, saving, updating examples, and predicting examples.
+    """
+    def __init__(self, n_classes, vocab, glove_model, emb_dim=300,
+                n_hidden_units=100, nn_dropout=.5):
         super(DanModel, self).__init__()
-        self.embedding_dim = embedding_dim
-        self.n_hidden_units = n_hidden_units
-        self.encoder = DanEncoder(embedding_dim, 2, n_hidden_units ,0.1)
         self.n_classes = n_classes
+        self.vocab_size = len(vocab)
+        self.vocab = vocab
+        self.emb_dim = emb_dim
+        self.n_hidden_units = n_hidden_units
         self.nn_dropout = nn_dropout
-        self.classifier = nn.Sequential(
-                nn.Linear(self.n_hidden_units, n_classes),
-                nn.BatchNorm1d(self.n_classes),
-                nn.Dropout(self.nn_dropout)
-        )
-        self.dropout = nn.Dropout(self.nn_dropout)
-        self.vocab_size = vocab_size
-        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=pad_idx)
-        #self.unigram_embeddings.weight.data = 
-    def _pool(self, embed):
-        emb_max, _ = torch.max(embed, 1)
-        return emb_max
 
-    def forward(self, input_words):
-        embed = self.embedding(input_words)
-        embed = self._pool(embed)
-        embed = self.dropout(embed)
-        encoded = self.encoder(embed)
-        return self.classifier(encoded)
+        self.embeddings = nn.Embedding(self.vocab_size, self.emb_dim, padding_idx=0)
 
+        pretrained_weights = np.zeros((self.vocab_size, 300))
+
+        for i, word in enumerate(vocab):
+            try:
+                pretrained_weights[i] = glove_model[word]
+            except:
+                pretrained_weights[i] = glove_model['unk']
+        self.embeddings.weight.data.copy_(torch.from_numpy(pretrained_weights))
+
+
+        self.linear1 = nn.Linear(emb_dim, n_hidden_units)
+        self.linear2 = nn.Linear(n_hidden_units, n_classes)
+
+        #### modify the init function, you need to add necessary layer definition here
+        #### note that linear1, linear2 are used for mlp layer
+        self.act = nn.ELU()
+        self._softmax = nn.Softmax()
+        self.dropout = nn.Dropout(nn_dropout)
+        #self.hidden = nn.Linear(n_hidden_units, n_hidden_units)
+        self.classifier = nn.Sequential(self.linear1, self.act, self.dropout, self.linear2)
+
+
+    def forward(self, input_text, text_len, is_prob=False, argmax = False):
+        """
+        Model forward pass
+
+        Keyword arguments:
+        input_text : vectorized question text 
+        text_len : batch * 1, text length for each question
+        in_prob: if True, output the softmax of last layer
+
+        """
+        #### write the forward funtion, the output is logits
+        text_embed = self.embeddings(input_text)
+
+        encoded = text_embed.sum(1)
+        #encoded = encoded/text_embed.size(1)
+        encoded = encoded/text_len.view(text_len.size(0),-1)
+        logits = self.classifier(encoded)
+
+        if is_prob:
+            logits = self._softmax(logits)
+        if argmax:
+            logits = np.argmax(logits, axis = 1)
+
+        return logits
 
 
 class DanGuesser:
-    def __init__(self, on_cuda=False):
+    def __init__(self, device='cpu'):
         self.dan_model = None
-        self.i_to_ans = None
-        self.ans_to_i = None
-        self.vocab_list = None
-        self.i_to_word = None
-        self.word_to_i = None
-        self.on_cuda = on_cuda
+        self.i_to_class = None
+        self.class_to_i = None
+        self.voc = None
+        self.ind2word = None
+        self.word2ind = None
+        self.device = device
+        self.glove_model = None
 
     def train(self, training_data) -> None:
-        hidden_layer_size = 256
-        questions = training_data[0]
-        answers = training_data[1]
-        words, self.word_to_i, self.i_to_word = preprocess.load_words(questions)
-        self.i_to_ans = {i: ans for i, ans in enumerate(answers)}
-        self.ans_to_i = dict((v,k) for k,v in self.i_to_ans.items())
-        self.dan_model = DanModel(len(self.ans_to_i),hidden_layer_size, hidden_layer_size, len(words), 0, 0.1)
-        if self.on_cuda:
-            self.dan_model.cuda()
-        dataset = QuestionsDataset(questions, answers, self.word_to_i, self.ans_to_i)
-        dataloader = DataLoader(dataset, batch_size=16)
-
-        print('Questions loaded, now iterating...')
-        print('on cuda? {}'.format(self.on_cuda))
-        for batch_idx, batch in enumerate(tqdm(dataloader)):
-            question, answer = batch
-            torch_tensor = self.make_padded_tensor(question)
-            if self.on_cuda:
-                torch_tensor = torch_tensor.cuda()
-            self.dan_model(torch_tensor)
-
-    def make_padded_tensor(self, batch_inds):
-        # note: maybe this could be made more efficient,
-        # if it turns out to be a bottleneck
-        lengths = [len(q) for q in batch_inds]
-        pad_len = max(lengths)
-        torch_tensor = torch.zeros(len(batch_inds), pad_len, dtype=torch.int64)
-        for i in range(len(batch_inds)):
-            for j in range(len(batch_inds[i])):
-                torch_tensor[i, j] = batch_inds[i][j]
-        return torch_tensor
-
-
+        raise NotImplementedError
 
     def save(self):
-        with open(MODEL_PATH, 'wb') as f:
-            pickle.dump({'i_to_ans': self.i_to_ans, 'ans_to_i': self.ans_to_i},
-                    f)
-        torch.save(self.dan_model.state_dict(), TORCH_MODEL_PATH)
+        raise NotImplementedError
 
     def guess(self, questions: List[str], max_n_guesses: Optional[int]) -> List[List[Tuple[str, float]]]:
-        idx_qs = self.questions_to_batch(questions)
-        prediction_scores = self.dan_model(idx_qs)
-
-        guesses = []
-        for i in range(len(questions)):
-            guesses.append([('beer', 1.0), ('coffee', 0.5)])
-        return guesses
+        raise NotImplementedError
 
     @classmethod
     def load(cls):
         with open(MODEL_PATH, 'rb') as f:
             params = pickle.load(f)
             guesser = DanGuesser()
-            guesser.i_to_ans = params['i_to_ans']
-            guesser.ans_to_i = params['ans_to_i']
-            guesser.dan_model = DanModel(100,256, 256, len(guesser.ans_to_i), 0, 0.1)
+            guesser.i_to_class = params['i_to_class']
+            guesser.class_to_i = params['class_to_i']
+            guesser.voc = params['voc']
+            guesser.ind2word = params['ind2word']
+            guesser.word2ind = params['word2ind']
+            num_classes = params['num_classes']
+            guesser.glove_model = params['glove_model']
+            guesser.dan_model = DanModel(num_classes, guesser.voc, guesser.glove_model)
             guesser.dan_model.load_state_dict(torch.load(
                 TORCH_MODEL_PATH))
             guesser.dan_model.eval()
@@ -186,7 +144,7 @@ class DanGuesser:
 
 
 
-        
+ 
 class TfidfGuesser:
     def __init__(self):
         self.tfidf_vectorizer = None
@@ -296,6 +254,7 @@ def train():
     Train the DAN model, requires downloaded data and saves to models/
     """
     dataset = QuizBowlDataset(guesser_train=True)
+    print('cuda status: {}'.format(torch.cuda.is_available()))
     print('Downloading punkt...')
     nltk.download('punkt')
     print('training DAN...')
