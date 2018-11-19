@@ -140,7 +140,7 @@ class DanGuesser:
         input_batch = self.batchify_without_labels(input_questions)
         question_text = input_batch['text']
         question_len = input_batch['len']
-        logits = self.dan_model.forward(question_text, question_len).detach()
+        logits = self.dan_model.forward(question_text, question_len, is_prob=True).detach()
         top_n, top_i = logits.topk(max_n_guesses)
         answer_indices = top_i.numpy()
         answer_scores = top_n.numpy()
