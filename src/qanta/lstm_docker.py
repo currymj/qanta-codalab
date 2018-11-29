@@ -18,6 +18,11 @@ import nltk
 from tqdm import tqdm
 import numpy as np
 
+from torch.nn.utils.rnn import pack_padded_sequence as pack
+import torch.nn.functional as F
+
+
+
 MODEL_PATH = 'lstm_model.pickle'
 TORCH_MODEL_PATH = 'lstm_model_1.pyt'
 BUZZ_NUM_GUESSES = 10
@@ -25,6 +30,7 @@ BUZZ_THRESHOLD = 0.3
 
 
 def guess_and_buzz(model, question_text) -> Tuple[str, bool]:
+    print('guessing')
     guesses = model.guess([question_text], BUZZ_NUM_GUESSES)[0]
     scores = [guess[1] for guess in guesses]
     buzz = scores[0] / sum(scores) >= BUZZ_THRESHOLD
@@ -32,6 +38,7 @@ def guess_and_buzz(model, question_text) -> Tuple[str, bool]:
 
 
 def batch_guess_and_buzz(model, questions) -> List[Tuple[str, bool]]:
+    print('batch guessing')
     question_guesses = model.guess(questions, BUZZ_NUM_GUESSES)
     outputs = []
     for guesses in question_guesses:
@@ -114,7 +121,7 @@ class LstmGuesser:
         input_batch = self.batchify_without_labels(input_questions)
         question_text = input_batch['text']
         question_len = input_batch['len']
-        logits = self.lstm_model.forward(question_text, question_len, is_prob=True).detach()
+        logits = self.lstm_model.forward(question_text, question_len).detach()
         top_n, top_i = logits.topk(max_n_guesses)
         answer_indices = top_i.numpy()
         answer_scores = top_n.numpy()
@@ -202,7 +209,7 @@ class LstmGuesser:
             guesser.word2ind = params['word2ind']
             num_classes = params['num_classes']
             guesser.glove_model = params['glove_model']
-            guesser.lstm_model = QAModel(num_classes, guesser.voc, guesser.glove_model)
+            guesser.lstm_model = QAmodel(num_classes, guesser.voc, guesser.glove_model)
             guesser.lstm_model.load_state_dict(torch.load(
                 TORCH_MODEL_PATH))
             guesser.lstm_model.eval()
@@ -250,9 +257,10 @@ def cli():
 @click.option('--disable-batch', default=False, is_flag=True)
 def web(host, port, disable_batch):
     """
-    Start web server wrapping tfidf model
+    Start web server wrapping lstm model
     """
-    app = create_app(enable_batch=not disable_batch)
+    print('lstm app running')
+    app = create_app(enable_batch=False)
     app.run(host=host, port=port, debug=False)
 
 
@@ -270,6 +278,8 @@ def test_guess():
     print(dan_guesser.guess(['This is a test question for ten points.'], 1))
     print(dan_guesser.guess(['Here we have a first question for ten points.', 'And another question for ten points.'], 1))
     print(dan_guesser.guess(['Here we have a first question for ten points.', 'And another question for ten points.'], 2))
+    print(guess_and_buzz(dan_guesser, 'This is a test question for ten points.'))
+    print(batch_guess_and_buzz(dan_guesser, ['This is a test question for ten points.']))
 
 @cli.command()
 @click.option('--local-qanta-prefix', default='data/')
