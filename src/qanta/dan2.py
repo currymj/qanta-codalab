@@ -21,7 +21,7 @@ import numpy as np
 MODEL_PATH = 'danmodel.pickle'
 TORCH_MODEL_PATH = 'danmodel.pyt'
 BUZZ_NUM_GUESSES = 10
-BUZZ_THRESHOLD = 0.3
+BUZZ_THRESHOLD = 0.999
 
 
 def guess_and_buzz(model, question_text) -> Tuple[str, bool]:
