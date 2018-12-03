@@ -30,7 +30,6 @@ BUZZ_THRESHOLD = 0.3
 
 
 def guess_and_buzz(model, question_text) -> Tuple[str, bool]:
-    print('guessing')
     guesses = model.guess([question_text], BUZZ_NUM_GUESSES)[0]
     scores = [guess[1] for guess in guesses]
     buzz = scores[0] / sum(scores) >= BUZZ_THRESHOLD
@@ -38,7 +37,6 @@ def guess_and_buzz(model, question_text) -> Tuple[str, bool]:
 
 
 def batch_guess_and_buzz(model, questions) -> List[Tuple[str, bool]]:
-    print('batch guessing')
     question_guesses = model.guess(questions, BUZZ_NUM_GUESSES)
     outputs = []
     for guesses in question_guesses:
@@ -260,7 +258,7 @@ def web(host, port, disable_batch):
     Start web server wrapping lstm model
     """
     print('lstm app running')
-    app = create_app(enable_batch=False)
+    app = create_app(enable_batch=not disable_batch)
     app.run(host=host, port=port, debug=False)
 
 
